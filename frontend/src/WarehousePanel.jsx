@@ -1,19 +1,22 @@
 import { useState } from 'react'
-import { DEVICE_LABELS } from './lib.js'
+import { canCollect, DEVICE_LABELS, formatDate } from './lib.js'
 
-const TERMINAL = ['resold', 'donated', 'recycled']
+const TERMINAL = ['resold', 'donated', 'recycled', 'not_received']
 
 // DEMO ONLY. In production these steps come from Revivn's warehouse tools,
 // never from the customer's screen. The panel exists so the read-only
 // customer view can be shown updating live.
-export default function WarehousePanel({ pickup, rowError, onAction }) {
+// `busy`: some request is in flight, so every button waits (no double submits).
+export default function WarehousePanel({ pickup, today, busy, rowError, onAction }) {
   const [serial, setSerial] = useState('')
   const [model, setModel] = useState('')
   const openDevices = pickup.devices.filter(d => !TERMINAL.includes(d.status))
+  // Once a certificate is issued the server refuses new devices and "not received" (422 { pickup: [...] }).
+  const closed = Boolean(pickup.certificate_number)
   const errorFor = key => rowError?.key === key && <p className="row-error" role="alert">{rowError.message}</p>
 
   // Collect, receive and check-in record a physical fact, so no confirm.
-  // Sanitize and dispose are irreversible decisions, so they confirm first.
+  // Sanitize, dispose and not-received are irreversible decisions, so they confirm first.
   function deviceAction(device, action, body, confirmText) {
     return onAction({
       key: `device-${device.id}`,
@@ -56,32 +59,39 @@ export default function WarehousePanel({ pickup, rowError, onAction }) {
 
         {pickup.status === 'cancelled' && <p className="state">This pickup was cancelled. Nothing to simulate.</p>}
 
-        {pickup.status === 'scheduled' && (
+        {pickup.status === 'scheduled' && (canCollect(pickup, today) ? (
           <>
             <div className="detail-actions">
-              <button type="button" className="btn btn-secondary"
+              <button type="button" className="btn btn-secondary" disabled={busy}
                 onClick={() => onAction({ key: 'collect', pickupId: pickup.id, path: `/pickups/${pickup.id}/collect`, focusIds: ['warehouse-heading'] })}>
                 Mark pickup collected
               </button>
             </div>
             {errorFor('collect')}
           </>
-        )}
+        ) : (
+          <p className="state">Revivn can collect this pickup from {formatDate(pickup.pickup_date)}.</p>
+        ))}
 
         {pickup.status === 'collected' && (
           <>
-            <form className="add-device" onSubmit={addDevice}>
-              <div className="field">
-                <label htmlFor="wh-serial">Unlisted device: serial number</label>
-                <input id="wh-serial" value={serial} maxLength={50} spellCheck={false} onChange={e => setSerial(e.target.value)}
-                  aria-invalid={rowError?.key === 'add-device'} aria-describedby={rowError?.key === 'add-device' ? 'add-device-error' : undefined} />
-              </div>
-              <div className="field">
-                <label htmlFor="wh-model">Model (optional)</label>
-                <input id="wh-model" value={model} maxLength={100} onChange={e => setModel(e.target.value)} />
-              </div>
-              <button className="btn btn-secondary">Check in device</button>
-            </form>
+            {closed ? (
+              <p className="state">Intake closed: certificate {pickup.certificate_number} issued.</p>
+            ) : (
+              <form className="add-device" onSubmit={addDevice}>
+                <div className="field">
+                  <label htmlFor="wh-serial">Unlisted device: serial number</label>
+                  <input id="wh-serial" value={serial} maxLength={50} spellCheck={false} onChange={e => setSerial(e.target.value)}
+                    aria-invalid={rowError?.key === 'add-device'} aria-describedby={rowError?.key === 'add-device' ? 'add-device-error' : undefined} />
+                </div>
+                <div className="field">
+                  <label htmlFor="wh-model">Model (optional)</label>
+                  <input id="wh-model" value={model} maxLength={100} onChange={e => setModel(e.target.value)} />
+                </div>
+                <button className="btn btn-secondary" disabled={busy}>Check in device</button>
+              </form>
+            )}
+            {/* Outside the form: a 422 "Pickup is closed" refreshes the pickup, which hides the form, and stays readable. */}
             {rowError?.key === 'add-device' && <p id="add-device-error" className="row-error" role="alert">{rowError.message}</p>}
 
             {openDevices.length === 0 ? (
@@ -103,15 +113,23 @@ export default function WarehousePanel({ pickup, rowError, onAction }) {
                       <td><span className={`pill tone-${d.status}`}>{DEVICE_LABELS[d.status]}</span></td>
                       <td className="step-actions">
                         {d.status === 'expected' && (
-                          <button type="button" className="btn btn-secondary" onClick={() => deviceAction(d, 'receive')}>Receive</button>
+                          <>
+                            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => deviceAction(d, 'receive')}>Receive</button>
+                            {!closed && (
+                              <button type="button" className="btn btn-secondary" disabled={busy}
+                                onClick={() => deviceAction(d, 'mark_not_received', undefined, `Mark ${d.serial_number} as not received? It never arrived, so it's left off the certificate. This is final.`)}>
+                                Mark not received
+                              </button>
+                            )}
+                          </>
                         )}
                         {d.status === 'received' && (
                           <>
-                            <button type="button" className="btn btn-secondary"
+                            <button type="button" className="btn btn-secondary" disabled={busy}
                               onClick={() => deviceAction(d, 'sanitize', { sanitization_method: 'wipe' }, `Wipe the data on ${d.serial_number}? This can't be undone.`)}>
                               Sanitize: wipe
                             </button>
-                            <button type="button" className="btn btn-secondary"
+                            <button type="button" className="btn btn-secondary" disabled={busy}
                               onClick={() => deviceAction(d, 'sanitize', { sanitization_method: 'destroy' }, `Destroy the drive in ${d.serial_number}? It can then only be recycled.`)}>
                               Sanitize: destroy
                             </button>
@@ -121,11 +139,11 @@ export default function WarehousePanel({ pickup, rowError, onAction }) {
                           <>
                             {d.sanitization_method === 'wipe' && (
                               <>
-                                <button type="button" className="btn btn-secondary" onClick={() => dispose(d, 'resold', 'resold')}>Resell</button>
-                                <button type="button" className="btn btn-secondary" onClick={() => dispose(d, 'donated', 'donated')}>Donate</button>
+                                <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => dispose(d, 'resold', 'resold')}>Resell</button>
+                                <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => dispose(d, 'donated', 'donated')}>Donate</button>
                               </>
                             )}
-                            <button type="button" className="btn btn-secondary" onClick={() => dispose(d, 'recycled', 'recycled')}>Recycle</button>
+                            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => dispose(d, 'recycled', 'recycled')}>Recycle</button>
                           </>
                         )}
                         {errorFor(`device-${d.id}`)}

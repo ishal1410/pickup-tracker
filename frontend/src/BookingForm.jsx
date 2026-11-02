@@ -1,14 +1,17 @@
 import { useState } from 'react'
-import { api, errorMessages, parseSerials, todayLocal } from './lib.js'
+import { api, errorMessages, errorText, parseSerials } from './lib.js'
 
-const EMPTY = { pickup_date: '', estimated_device_count: '', serials: '' }
+// An empty date means "server today" (`today` prop, from GET /customer): the earliest date the server accepts,
+// and it stays right even when /customer answers after the form appears.
+const emptyForm = () => ({ pickup_date: '', estimated_device_count: '', serials: '' })
 
-export default function BookingForm({ disabled, onBooked }) {
-  const [form, setForm] = useState(EMPTY)
+export default function BookingForm({ today, disabled, onBooked }) {
+  const [form, setForm] = useState(emptyForm)
   const [fieldErrors, setFieldErrors] = useState({})
   const [formError, setFormError] = useState(null)
   const [saving, setSaving] = useState(false)
   const serialCount = parseSerials(form.serials).length
+  const pickupDate = form.pickup_date || today
 
   function update(field, value) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -21,12 +24,12 @@ export default function BookingForm({ disabled, onBooked }) {
     try {
       const pickup = await api('/pickups', 'POST', {
         pickup: {
-          pickup_date: form.pickup_date,
+          pickup_date: pickupDate,
           estimated_device_count: form.estimated_device_count,
           serial_numbers: parseSerials(form.serials),
         },
       })
-      setForm(EMPTY)
+      setForm(emptyForm())
       setFieldErrors({})
       onBooked(pickup)
     } catch (err) {
@@ -36,7 +39,8 @@ export default function BookingForm({ disabled, onBooked }) {
         // Move focus to the first field that failed, in form order (the server's key order
         // follows its validations), so its error is read out.
         const first = ['pickup_date', 'estimated_device_count', 'serial_numbers'].find(f => err.fields[f])
-        document.getElementById(first === 'serial_numbers' ? 'serials' : first)?.focus()
+        if (first) document.getElementById(first === 'serial_numbers' ? 'serials' : first).focus()
+        else setFormError(`Couldn't book the pickup. ${errorText(err)}`) // a key with no field of its own
       } else {
         setFormError(`Couldn't book the pickup. ${err.message}`)
       }
@@ -62,7 +66,7 @@ export default function BookingForm({ disabled, onBooked }) {
 
         <div className="field">
           <label htmlFor="pickup_date">Pickup date</label>
-          <input id="pickup_date" type="date" min={todayLocal()} value={form.pickup_date} required
+          <input id="pickup_date" type="date" min={today} value={pickupDate} required
             onChange={e => update('pickup_date', e.target.value)}
             aria-invalid={Boolean(fieldErrors.pickup_date)} aria-describedby={describedBy('pickup_date')} />
           {errorFor('pickup_date')}

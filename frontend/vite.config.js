@@ -5,5 +5,5 @@ import react from '@vitejs/plugin-react'
 const rails = 'http://localhost:3000'
 export default defineConfig({
   plugins: [react()],
-  server: { proxy: { '/customer': rails, '/pickups': rails, '/devices': rails } },
+  server: { proxy: { '/customer': rails, '/pickups': rails, '/devices': rails, '/demo': rails } },
 })

@@ -13,6 +13,7 @@ export const DEVICE_LABELS = {
   resold: 'Resold',
   donated: 'Donated',
   recycled: 'Recycled',
+  not_received: 'Not received',
 }
 export const METHOD_LABELS = { wipe: 'Wiped', destroy: 'Drive destroyed' }
 
@@ -60,7 +61,7 @@ export function parseSerials(text) {
   return text.split('\n').map(line => line.trim()).filter(Boolean)
 }
 
-// Today in the browser's timezone. toISOString() would use UTC.
+// Fallback only: the app uses GET /customer `today` (the server's Eastern date). toISOString() would use UTC.
 export function todayLocal(now = new Date()) {
   const pad = n => String(n).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
@@ -91,4 +92,25 @@ export function repurposeSummary(pickups) {
   const repurposed = sum('resold') + donated
   const withOutcome = repurposed + sum('recycled')
   return { repurposed, donated, withOutcome, percent: withOutcome ? Math.round((repurposed / withOutcome) * 100) : null }
+}
+
+// `today` is the server's date from GET /customer. ISO date strings compare as dates.
+export const isLate = (pickup, today) => pickup.status === 'scheduled' && pickup.pickup_date < today
+export const canCollect = (pickup, today) => pickup.status === 'scheduled' && pickup.pickup_date <= today
+
+// Devices that physically reached Revivn: not still expected, not marked never arrived.
+export const checkedInCount = c => c.total - c.expected - (c.not_received ?? 0)
+export const sanitizedCount = c => c.sanitized + c.resold + c.donated + c.recycled
+
+// Found at intake: its history never had an `expected` step (it wasn't on the customer's list).
+export const isUnlisted = device => Boolean(device.history?.length) && !device.history.some(e => e.status === 'expected')
+
+// Arrived vs. the customer's estimate, once collected. "Fewer" waits until no listed device is still expected.
+export function mismatchNote(pickup) {
+  if (pickup.status !== 'collected') return null
+  const diff = checkedInCount(pickup.device_counts) - pickup.estimated_device_count
+  const noun = n => (n === 1 ? 'device' : 'devices')
+  if (diff > 0) return `${diff} more ${noun(diff)} than you estimated.`
+  if (diff < 0 && pickup.device_counts.expected === 0) return `${-diff} fewer ${noun(-diff)} than you estimated.`
+  return null
 }

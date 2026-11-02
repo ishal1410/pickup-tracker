@@ -171,6 +171,8 @@ h2 { font-size: 1.0667rem; font-weight: 600; letter-spacing: -0.01em; margin-bot
 .tone-resold { --tone: #1d5c4b; --tone-tint: #d3e5de; --tone-text: #164a3c; }
 .tone-donated { --tone: #8c62a8; --tone-tint: #eee4f4; --tone-text: #63407c; }
 .tone-recycled, .tone-cancelled { --tone: #7a837f; --tone-tint: #e8eae8; --tone-text: #464e4a; }
+/* Never arrived: the danger hue, muted, so it reads as an exception without shouting. */
+.tone-not_received { --tone: #b8746d; --tone-tint: #f8e6e3; --tone-text: #7d231c; }
 .segment, .dot { background: var(--tone); }
 .pill {
   display: inline-block;
@@ -293,6 +295,28 @@ tr.selected > * { background: rgba(29, 92, 75, 0.06); }
 .serial { font-family: var(--mono); font-size: 0.9333rem; }
 .devices { margin-top: 20px; }
 
+/* "Unlisted": found at intake, not on the customer's booking list. */
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mismatch { font-weight: 600; color: var(--ink); }
+
+/* Per-device history: a native disclosure under the status pill, a short dotted timeline inside. */
+.history { margin-top: 6px; font-size: 0.8667rem; color: var(--muted); }
+.history summary { cursor: pointer; width: fit-content; }
+.history ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--hairline); }
+.history li { padding: 1px 0; }
+.history time { font-variant-numeric: tabular-nums; }
+
 /* Progress: four labelled steps, filled up to the current one. Not clickable. */
 .progress { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 0 0 12px; }
 .progress li {
@@ -335,6 +359,74 @@ tr.selected > * { background: rgba(29, 92, 75, 0.06); }
 .cert-facts dt { color: var(--muted); }
 .cert-facts dd { margin: 0; font-weight: 500; min-width: 0; }
 .cert-note { margin-top: 20px; }
+.cert-exceptions { margin-top: 24px; }
+.cert-exceptions h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.cert-exceptions ul { margin: 8px 0 0; padding-left: 18px; }
+
+/* ---------- Welcome card: the first screen, before the portal ---------- */
+
+.welcome {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  animation: settle 600ms var(--ease) both;
+}
+.welcome-card { width: 100%; max-width: 440px; }
+.welcome-card .core { padding: 32px; }
+.welcome-card .brand-mark { display: block; margin-bottom: 20px; }
+.welcome-sub { color: var(--muted); margin-top: 4px; }
+.welcome-note { text-align: center; margin-top: 10px; }
+
+/* Chain of custody: three numbered steps, stacked, joined by a vertical line. */
+.custody { list-style: none; counter-reset: step; padding: 0; margin: 24px 0 28px; }
+.custody li {
+  counter-increment: step;
+  position: relative;
+  padding: 0 0 16px 36px;
+  font-weight: 500;
+}
+.custody li:last-child { padding-bottom: 0; }
+.custody li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: #dceee7; color: var(--accent);
+  font-size: 0.8rem; font-weight: 600;
+}
+.custody li:not(:last-child)::after {
+  content: '';
+  position: absolute; left: 11px; top: 26px; bottom: 2px;
+  width: 2px; border-radius: 1px;
+  background: #dceee7;
+}
+
+/* ---------- Demo controls (top bar) and first-run empty state ---------- */
+
+.topbar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; min-width: 0; }
+.demo-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding-left: 16px;
+  border-left: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 0.8667rem;
+}
+.btn-small { padding: 4px 12px; font-size: 0.8667rem; }
+
+.empty { padding: 20px 0 4px; }
+.empty-title { font-weight: 600; }
+.link-btn {
+  margin-top: 14px;
+  padding: 4px 0;
+  min-height: 24px;
+  border: 0; background: none; cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.link-btn:hover:not(:disabled) { color: var(--accent-hover); }
+.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---------- Responsive ---------- */
 
@@ -347,6 +439,8 @@ tr.selected > * { background: rgba(29, 92, 75, 0.06); }
 /* Phones: each table row becomes a stacked card. */
 @media (max-width: 640px) {
   .page { padding: 16px 16px 48px; }
+  .demo-controls { padding-left: 0; border-left: 0; }
+  .welcome-card .core { padding: 24px; }
   h1 { font-size: 1.5rem; }
   .figure { font-size: 2.25rem; }
   .core { padding: 18px; }
