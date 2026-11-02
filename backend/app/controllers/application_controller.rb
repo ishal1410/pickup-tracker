@@ -13,6 +13,12 @@ class ApplicationController < ActionController::API
     render json: { error: exception.message }, status: :bad_request
   end
 
+  # ponytail: serial_number is the only unique index a request can hit.
+  # Add a key lookup here when a second one appears.
+  rescue_from ActiveRecord::RecordNotUnique do
+    render json: { serial_number: [ "has already been taken" ] }, status: :unprocessable_content
+  end
+
   private
     # ponytail: no login yet. Every query starts from current_customer, so a
     # real session lookup replaces this one method and nothing else changes.

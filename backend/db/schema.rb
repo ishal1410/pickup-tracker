@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_02_000003) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_02_000004) do
   create_table "customers", force: :cascade do |t|
     t.string "name", null: false
     t.datetime "created_at", null: false
@@ -29,6 +29,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_02_000003) do
     t.datetime "updated_at", null: false
     t.index ["pickup_id"], name: "index_devices_on_pickup_id"
     t.index ["serial_number"], name: "index_devices_on_serial_number", unique: true
+    t.check_constraint "CASE WHEN status IN ('expected', 'received') THEN sanitization_method IS NULL AND sanitized_at IS NULL ELSE sanitization_method IS NOT NULL AND sanitized_at IS NOT NULL END", name: "devices_sanitized_fields"
     t.check_constraint "sanitization_method IS NULL OR sanitization_method IN ('wipe', 'destroy')", name: "devices_method_allowed"
     t.check_constraint "status IN ('expected', 'received', 'sanitized', 'resold', 'donated', 'recycled')", name: "devices_status_allowed"
     t.check_constraint "status NOT IN ('resold', 'donated') OR sanitization_method = 'wipe'", name: "devices_reuse_needs_wipe"

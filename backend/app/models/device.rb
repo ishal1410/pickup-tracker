@@ -24,6 +24,8 @@ class Device < ApplicationRecord
   validates :model, length: { maximum: 100 }
   validates :status, inclusion: { in: STATUSES }
   validates :sanitization_method, inclusion: { in: SANITIZATION_METHODS }, unless: :before_sanitize?
+  validates :sanitized_at, presence: true, unless: :before_sanitize?
+  validate :sanitization_method_unchanged, on: :update
   validate :starts_expected_or_received, on: :create
   validate :pickup_collected_for_warehouse_steps
   validate :destroyed_device_only_recycled
@@ -72,6 +74,13 @@ class Device < ApplicationRecord
     def pickup_collected_for_warehouse_steps
       return if status == "expected" || pickup.nil?
       errors.add(:pickup, "must be collected first") unless pickup.collected?
+    end
+
+    # API-v2 2.3: once set it never changes.
+    def sanitization_method_unchanged
+      if sanitization_method_changed? && sanitization_method_was.present?
+        errors.add(:sanitization_method, "can't change once set")
+      end
     end
 
     def destroyed_device_only_recycled

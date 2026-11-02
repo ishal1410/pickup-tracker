@@ -26,6 +26,18 @@ class DevicesControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "serial_number" => [ "has already been taken" ] }, response.parsed_body)
   end
 
+  test "a duplicate serial that races past the validation still answers 422" do
+    # As if a concurrent insert landed between the validation and ours: only the unique index fires.
+    validator = Device.validators_on(:serial_number).grep(ActiveRecord::Validations::UniquenessValidator).first
+    validator.define_singleton_method(:validate_each) { |*| }
+
+    post pickup_devices_url(pickups(:collected)), params: { device: { serial_number: "C02REC0001" } }, as: :json
+    assert_response :unprocessable_content
+    assert_equal({ "serial_number" => [ "has already been taken" ] }, response.parsed_body)
+  ensure
+    validator.singleton_class.remove_method(:validate_each)
+  end
+
   test "receive an expected device once the pickup is collected" do
     pickups(:today).collect
     post receive_device_url(devices(:expected_one)), as: :json

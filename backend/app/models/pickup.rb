@@ -1,6 +1,7 @@
 class Pickup < ApplicationRecord
   include ForwardOnly
 
+  # ponytail: string column + inclusion, not enum: readable SQL and check constraints (Device does the same); switch to enum validate: true if scopes are needed.
   STATUSES = %w[scheduled collected cancelled].freeze
   # Only these moves are stored. "processing" and "complete" are derived
   # from the devices (see #progress), so they can never disagree.
@@ -39,23 +40,55 @@ class Pickup < ApplicationRecord
     @serial_numbers = Array(list).map { |serial| serial.to_s.strip.upcase }.reject(&:empty?)
   end
 
-  def progress
-    return status unless collected?
-
-    list = devices.to_a
-    return "complete" if list.any? && list.all? { |device| Device::OUTCOMES.include?(device.status) }
-    return "processing" if list.any? { |device| device.status != "expected" }
-    "collected"
+  # The list endpoint counts every pickup's devices in one grouped query
+  # instead of loading the rows.
+  def self.with_device_counts(pickups)
+    pickups = pickups.to_a
+    counts = Device.where(pickup: pickups).group(:pickup_id, :status).count
+    pickups.each do |pickup|
+      pickup.device_counts = Device::STATUSES.index_with { |status| counts.fetch([ pickup.id, status ], 0) }
+    end
   end
 
-  def certificate_available?
-    list = devices.to_a
-    list.any? && list.all? { |device| device.sanitized_at.present? }
+  def device_counts=(by_status)
+    @device_counts = by_status.merge("total" => by_status.values.sum)
   end
 
   def device_counts
-    list = devices.to_a
-    Device::STATUSES.index_with { |status| list.count { |device| device.status == status } }.merge("total" => list.size)
+    @device_counts || begin
+      tally = devices.map(&:status).tally
+      Device::STATUSES.index_with { |status| tally.fetch(status, 0) }.merge("total" => tally.values.sum)
+    end
+  end
+
+  def progress
+    return status unless collected?
+
+    counts = device_counts
+    return "complete" if counts["total"].positive? && Device::OUTCOMES.sum { |status| counts[status] } == counts["total"]
+    return "processing" if counts["expected"] < counts["total"]
+    "collected"
+  end
+
+  # Every status from sanitized on carries sanitized_at (validation plus the
+  # devices_sanitized_fields check constraint), so the counts answer this.
+  def certificate_available?
+    counts = device_counts
+    counts["total"].positive? && counts["expected"].zero? && counts["received"].zero?
+  end
+
+  # API-v2 4.9: the customer's proof that data was destroyed.
+  def certificate
+    {
+      pickup_id: id,
+      customer_name: customer.name,
+      pickup_date: pickup_date,
+      standard: "NIST SP 800-88",
+      issued_at: Time.current,
+      devices: devices.sort_by(&:serial_number).map do |device|
+        device.as_json.slice("serial_number", "model", "sanitization_method", "sanitized_at", "status")
+      end
+    }
   end
 
   # API-v2 3.1: the pickup summary.

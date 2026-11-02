@@ -23,6 +23,23 @@ class PickupsControllerTest < ActionDispatch::IntegrationTest
     assert_equal SUMMARY_KEYS, response.parsed_body.first.keys.sort
   end
 
+  test "index counts devices in SQL: 3 queries, no device rows loaded" do
+    loaded = []
+    counter = ->(*, payload) { loaded << payload[:class_name] }
+    ActiveSupport::Notifications.subscribed(counter, "instantiation.active_record") do
+      assert_queries_count(3) { get pickups_url, as: :json } # customer, pickups, grouped counts
+    end
+    assert_not_includes loaded, "Device"
+  end
+
+  test "index summaries match each pickup's own summary" do
+    devices(:received_one).sanitize("wipe")
+    get pickups_url, as: :json
+    expected = customers(:acme).pickups.order(pickup_date: :desc, id: :desc).map { |p| JSON.parse(p.to_json) }
+    assert_equal expected, response.parsed_body
+    assert response.parsed_body.find { |p| p["id"] == pickups(:collected).id }["certificate_available"]
+  end
+
   test "index keeps the 200 most recent pickups, so upcoming ones are never cut off" do
     now = Time.current
     old = Array.new(205) do |i|

@@ -4,8 +4,8 @@ class PickupsController < ApplicationController
   # GET /pickups: newest pickup date first, so upcoming pickups are never cut off.
   def index
     # ponytail: newest 200, no pagination. Add page params when a customer has more.
-    pickups = current_customer.pickups.includes(:devices).order(pickup_date: :desc, id: :desc).limit(200)
-    render json: pickups
+    pickups = current_customer.pickups.order(pickup_date: :desc, id: :desc).limit(200)
+    render json: Pickup.with_device_counts(pickups)
   end
 
   # GET /pickups/:id
@@ -40,16 +40,7 @@ class PickupsController < ApplicationController
       return render json: { error: "Certificate is available once every device in this pickup is sanitized" }, status: :conflict
     end
 
-    render json: {
-      pickup_id: @pickup.id,
-      customer_name: current_customer.name,
-      pickup_date: @pickup.pickup_date,
-      standard: "NIST SP 800-88",
-      issued_at: Time.current,
-      devices: @pickup.devices.sort_by(&:serial_number).map do |device|
-        device.as_json.slice("serial_number", "model", "sanitization_method", "sanitized_at", "status")
-      end
-    }
+    render json: @pickup.certificate
   end
 
   private

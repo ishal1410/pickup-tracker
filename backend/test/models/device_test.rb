@@ -65,6 +65,28 @@ class DeviceTest < ActiveSupport::TestCase
     assert_equal "destroy", device.reload.sanitization_method
   end
 
+  test "a concurrent second sanitize from a stale copy is refused, not overwritten" do
+    first = Device.find(devices(:received_one).id)
+    stale = Device.find(devices(:received_one).id)
+    assert first.sanitize("wipe")
+
+    assert_not stale.sanitize("destroy")
+    assert_equal({ status: [ "can't go from sanitized to sanitized" ] }, stale.errors.to_hash)
+    assert_equal "wipe", Device.find(first.id).sanitization_method
+  end
+
+  test "a sanitized device needs sanitized_at, even through a direct update" do
+    device = devices(:received_one)
+    assert_not device.update(status: "sanitized", sanitization_method: "wipe")
+    assert_equal({ sanitized_at: [ "can't be blank" ] }, device.errors.to_hash)
+  end
+
+  test "the sanitization method can't change once set, even through a direct update" do
+    device = devices(:wiped_one)
+    assert_not device.update(sanitization_method: "destroy")
+    assert_equal({ sanitization_method: [ "can't change once set" ] }, device.errors.to_hash)
+  end
+
   test "compliance: no outcome before sanitize" do
     device = devices(:received_one)
     assert_not device.dispose("resold")
@@ -106,6 +128,14 @@ class DeviceTest < ActiveSupport::TestCase
   test "as_json exposes exactly the contract fields" do
     assert_equal %w[created_at id model pickup_id sanitization_method sanitized_at serial_number status updated_at],
       devices(:received_one).as_json.keys.sort
+  end
+
+  test "database refuses a sanitized device without sanitized_at, even without validations" do
+    assert_raises(ActiveRecord::StatementInvalid) do
+      Device.insert_all([ { pickup_id: pickups(:collected).id, serial_number: "RAW2", status: "sanitized",
+                            sanitization_method: "wipe", sanitized_at: nil,
+                            created_at: Time.current, updated_at: Time.current } ])
+    end
   end
 
   test "database refuses a reused device whose drive was destroyed, even without validations" do
