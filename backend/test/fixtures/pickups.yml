@@ -1,0 +1,23 @@
+today:
+  customer: acme
+  estimated_device_count: 3
+  pickup_date: <%= Date.current %>
+  status: scheduled
+
+upcoming:
+  customer: acme
+  estimated_device_count: 20
+  pickup_date: <%= Date.current + 6 %>
+  status: scheduled
+
+collected:
+  customer: acme
+  estimated_device_count: 5
+  pickup_date: <%= Date.current - 7 %>
+  status: collected
+
+globex_pickup:
+  customer: globex
+  estimated_device_count: 4
+  pickup_date: <%= Date.current + 2 %>
+  status: scheduled

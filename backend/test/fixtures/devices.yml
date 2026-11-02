@@ -1,0 +1,36 @@
+expected_one:
+  pickup: today
+  serial_number: C02EXP0001
+  status: expected
+
+received_one:
+  pickup: collected
+  serial_number: C02REC0001
+  model: MacBook Pro 14
+  status: received
+
+wiped_one:
+  pickup: collected
+  serial_number: C02WIP0001
+  status: sanitized
+  sanitization_method: wipe
+  sanitized_at: <%= 1.day.ago.utc.to_fs(:db) %>
+
+destroyed_one:
+  pickup: collected
+  serial_number: C02DES0001
+  status: sanitized
+  sanitization_method: destroy
+  sanitized_at: <%= 1.day.ago.utc.to_fs(:db) %>
+
+resold_one:
+  pickup: collected
+  serial_number: C02RES0001
+  status: resold
+  sanitization_method: wipe
+  sanitized_at: <%= 2.days.ago.utc.to_fs(:db) %>
+
+globex_device:
+  pickup: globex_pickup
+  serial_number: GLX0000001
+  status: expected

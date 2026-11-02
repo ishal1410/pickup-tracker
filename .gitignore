@@ -1,0 +1,30 @@
+# Secrets
+backend/config/master.key
+backend/config/credentials/*.key
+*.key
+.env*
+!.env.example
+
+# Rails runtime files (keep .keep placeholders)
+backend/.bundle/
+backend/vendor/bundle/
+backend/log/*
+!backend/log/.keep
+backend/tmp/*
+!backend/tmp/.keep
+backend/storage/*
+!backend/storage/.keep
+*.sqlite3*
+
+# Frontend (frontend/.gitignore also covers these)
+node_modules/
+frontend/dist/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.gstack/

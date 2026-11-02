@@ -1,0 +1,63 @@
+# Rails review: pickup-tracker backend (as a Revivn senior Rails reviewer)
+
+Skill: `mattpocock-skills:code-review`, two axes (Standards, Spec). This folder is not a git repo, so there is no diff. The review covers the whole tree: `app/**`, `config/routes.rb`, `db/migrate/**`, `db/schema.rb`, `db/seeds.rb`, `test/**`. The repo has no CODING_STANDARDS file, so the Standards axis uses Rails 8 idiom plus the Fowler smell baseline. The Spec axis uses `docs/API-v2.md`.
+
+## How each finding was checked
+
+- `ruby bin/rails test`: **83 runs, 216 assertions, 0 failures, 0 errors** (2026-11-02).
+- `bin/rails runner` (read-only, no writes) on the seeded dev DB with 6 pickups and 15 devices:
+  - index with `includes(:devices)` runs **2 queries** and passes `strict_loading`
+  - index without the includes runs **7 queries** and raises `StrictLoadingViolationError`, so the `includes` is load-bearing
+  - `show` runs 2 queries; a device action's render runs **4**
+  - `received -> sanitized` through a plain update with no `sanitized_at` is **valid**
+  - swapping `sanitization_method` on a sanitized device is **valid**
+  - `ApplicationController.rescue_handlers` has only `RecordNotFound` and `ParameterMissing`
+  - `Pickup.respond_to?(:collected)` is `false`, so there are no enum scopes
+- Findings marked **(inspection)** come from reading the code, not from running it.
+
+## What already holds up (no action needed)
+
+- Tenancy: every lookup goes through `current_customer` (`pickups.find`, `devices.find` through `has_many :through`), so another customer's records answer 404. Controller tests cover this.
+- Rails 8 idiom is mostly in place: `params.expect`, `normalizes`, member routes for the actions, `rescue_from` for 404/400, `:unprocessable_content`.
+- The DB check constraints repeat the model rules (status lists, estimate range, `devices_reuse_needs_wipe`).
+- Booking is atomic. `after_create :create_expected_devices` runs inside `save`'s transaction, so a failing `create!` rolls back the pickup too.
+- No N+1 on `GET /pickups` (verified above).
+- Tests check behaviour (status codes and exact 422 bodies) and include DB-constraint tests with `insert_all`.
+
+---
+
+## Standards axis
+
+| Severity | file:line | Issue | Concrete fix | Likely interview question |
+|---|---|---|---|---|
+| **High** | `app/models/device.rb:35-36`, `app/models/concerns/forward_only.rb:14-19` | **(inspection)** Lost-update race on sanitize and dispose. `move_to` checks `status` on the in-memory record, then `update`s. Two concurrent `POST /devices/:id/sanitize` calls (wipe and destroy) both read `received` and both pass, so the second silently overwrites `sanitization_method` and `sanitized_at`. On a compliance record that is the worst kind of bug. | Lock the row and re-check: `def move_to(new_status, **attrs) = with_lock { ...existing body... }` (`with_lock` reloads inside the transaction; Rails 8 SQLite uses IMMEDIATE transactions). Or add optimistic locking: `add_column :devices, :lock_version, :integer, default: 0, null: false` and `rescue_from ActiveRecord::StaleObjectError` returning 409. | "Two warehouse workers click Sanitize at the same moment. What ends up on the certificate?" |
+| Medium | `app/controllers/application_controller.rb:8-14` (also `app/models/pickup.rb:102,106`, `app/controllers/devices_controller.rb:11`) | **(inspection, rescue list verified)** The serial uniqueness check is check-then-insert. Under a race the unique index raises `ActiveRecord::RecordNotUnique`, which nothing rescues, so the client gets a 500 instead of the contract's 422. | `rescue_from ActiveRecord::RecordNotUnique do render json: { serial_number: ["has already been taken"] }, status: :unprocessable_content end`. Keep the validation for the friendly message; the index is the real guarantee. | "Your uniqueness validation passes in both requests. What does the user see?" |
+| Medium | `app/models/pickup.rb:4,16,33-35`, `app/models/device.rb:8,25,63` | String column plus `STATUSES` plus `inclusion` plus a hand-written `collected?` and `before_sanitize?` rebuilds what `enum` gives for free. Verified: there are no `Pickup.collected` scopes. | `enum :status, %w[scheduled collected cancelled].index_by(&:itself), validate: true` (string-backed so the DB stays readable; `validate: true` gives a 422, not an `ArgumentError`). Then delete `STATUSES` and `collected?`, and use `Pickup.collected` and `device.expected?`. | "Why not `enum`?" (A fair answer: string values for readable SQL and check constraints. Then show you know `validate: true`.) |
+| Medium | `app/controllers/pickups_controller.rb:7`, `app/models/pickup.rb:45-58` | Index loads **every device row** of 200 pickups just to count statuses. The estimate is capped at 10,000 per pickup, so the worst case is about 2M AR objects for one list call. There is no `ponytail:` note naming this ceiling. | Count in SQL: `counts = Device.where(pickup_id: pickups.ids).group(:pickup_id, :status).count`, then pass the counts into the summary (`progress` and `certificate_available` both follow from the counts plus a `sanitized_at IS NULL` count). Or at minimum leave a ceiling comment. | "What does this endpoint cost for a customer with 50k devices?" |
+| Medium | `app/controllers/pickups_controller.rb:38-53` | The certificate document (its shape, the `"NIST SP 800-88"` constant, the device sort and slice) is built inside the controller action. It is the only response not owned by the model or a presenter. | Move it to `Pickup#certificate` (or a PORO `Certificate.new(pickup).as_json`), so the action is `render json: @pickup.certificate`. Then unit-test the shape without HTTP. | "Where would you put this if the PDF version and the email version need the same data?" |
+| Low | `app/models/pickup.rb:62,77`, `app/models/device.rb:47-59` | `as_json(_options = nil)` overrides and ignores options. `as_json_with_devices` is a non-standard name, and `Device#as_json` hand-lists what `serializable_hash(only:)` does. This is acceptable without new gems, but it mixes presentation into the models. | `Device`: `def as_json(*) = serializable_hash(only: %i[id pickup_id serial_number model status sanitization_method sanitized_at created_at updated_at])`. Pickup: keep the explicit hash, but rename to `as_json(devices: true)` or extract a `PickupPresenter`. | "as_json in the model vs jbuilder vs a serializer: why this one?" |
+| Low | `app/controllers/pickups_controller.rb:68-74`, `app/controllers/devices_controller.rb:43-49` | Duplicated code: two `render_result` methods that differ only in the receiver. | One method in `ApplicationController`: `def render_pickup(record, ok, pickup: record) = ok ? render(json: pickup.reload.as_json_with_devices) : render(json: record.errors, status: :unprocessable_content)`. | "What changes in two places when the error format changes?" |
+| Low | `app/controllers/devices_controller.rb:45` | `@device.pickup.reload` loads the pickup twice. A device action render runs 4 queries (verified); 3 are enough. | `render json: Pickup.find(@device.pickup_id).as_json_with_devices` | "Count the queries in this action." |
+| Low | `app/models/pickup.rb:46-47,53` | Possible feature envy: Pickup asks about Device internals (`Device::OUTCOMES.include?(device.status)`, `device.sanitized_at.present?`). | `Device#terminal? = OUTCOMES.include?(status)`; `Device#sanitized? = sanitized_at.present?` (or the enum predicates). | "Who should know which statuses are terminal?" |
+| Low | `app/controllers/application_controller.rb:2`, `db/seeds.rb:30` | The seeds reach into a controller constant (`ApplicationController::DEMO_CUSTOMER_NAME`). Data depends on the web layer. | `class Customer; def self.demo = find_by!(name: "Acme Corp"); end`. Then `current_customer` becomes `Customer.demo` and seeds use the same name. | "Why does db/seeds.rb load a controller?" |
+| Low | `db/seeds.rb:4-6` | `Device.delete_all` / `Pickup.delete_all` / `Customer.delete_all` with no environment guard. | `abort "Demo seeds wipe the DB; refusing outside development/test" unless Rails.env.local?` | "What happens if someone runs db:seed in production?" |
+| Low | `db/migrate/20261101232851_create_pickups.rb`, `db/migrate/20261102000000_add_not_null_to_pickups.rb`, `db/migrate/20261102000002_reshape_pickups_for_v2.rb:4` | The migration history shows the v1 to v2 pivot, including `execute "DELETE FROM pickups"` in a migration. It has never been deployed, so this is noise a reviewer will read as a destructive-migration habit. There is also no composite index for the list query. | Squash into clean `create_customers`, `create_pickups`, `create_devices` migrations that match `schema.rb`. Add `add_index :pickups, %i[customer_id pickup_date id]`. | "Would you ship a migration that deletes rows?" |
+| Low | `app/models/customer.rb:3`, `app/models/pickup.rb:10` | `has_many` without `dependent:`. Deleting a customer hits the FK, raising `InvalidForeignKey`, which becomes a 500. The "nothing is deleted" rule is real but not stated in the model. | `has_many :pickups, dependent: :restrict_with_error` (same for `Pickup has_many :devices`). | "What happens when you destroy a customer?" |
+| Low | `test/**` (grep: no `assert_queries_count`) | The 2-query index is not locked in by any test. Removing `includes(:devices)` would keep the suite green (verified: it goes to 7 queries). | `test "index does not N+1" do assert_queries_count(3) { get pickups_url, as: :json } end` (Rails 7.2+; the count includes the customer lookup). Alternatively, `config.active_record.strict_loading_by_default = true` in test.rb. | "How do you know there's no N+1, and how would you know next month?" |
+| Low | `test/**` (grep: seeds never loaded) | `db/seeds.rb` drives every rule through the real model methods (`step!` raises), but no test runs it, so a model change can silently break the demo. | `test "demo seeds load" do load Rails.root.join("db/seeds.rb"); assert_equal 6, Pickup.count end` (it runs inside the test transaction). | "How do you know the demo data still works after a rule change?" |
+| Low | `test/models/pickup_progress_test.rb:8-34` | The booking and serial validation tests sit in a file named for progress, so naming does not match content. `test/models/device_test.rb:13-14` asserts `not valid?` for a blank serial without checking which error. | Move the booking tests to `pickup_test.rb`. Assert `assert_includes device.errors[:serial_number], "can't be blank"`. | "Where would I look for the serial-number rules?" |
+
+## Spec axis (against `docs/API-v2.md`)
+
+| Severity | file:line | Issue | Concrete fix | Likely interview question |
+|---|---|---|---|---|
+| Medium | `app/models/device.rb:26`, `db/migrate/20261102000003_create_devices.rb:13-16` | The spec says *"`sanitization_method` ... Once set it never changes"* (API-v2 2.3) and *"Rules this encodes, each enforced in the model"*. Verified with runner that a plain update can (a) set `status: "sanitized"` with `sanitized_at` nil, which makes `certificate_available` false while the status says sanitized, and (b) swap `wipe` to `destroy` on a sanitized device. Only the `move_to` path guards this. `ForwardOnly` guards `status` alone. | Model: `validates :sanitized_at, presence: true, unless: :before_sanitize?` and `validate { errors.add(:sanitization_method, "can't change once set") if sanitization_method_changed? && sanitization_method_was.present? }`. DB: `add_check_constraint :devices, "(status IN ('expected','received')) = (sanitization_method IS NULL AND sanitized_at IS NULL)", name: "devices_sanitized_fields"`. | "Your contract says the method never changes. Show me where that's enforced for a console update." |
+| Low | `app/models/concerns/forward_only.rb:15-18` vs API-v2 4.6 | **(inspection)** The spec says collect's 422 has *"one or both keys"* (`pickup_date` and `status`). `move_to` returns before validation runs, so collecting a cancelled future pickup only ever returns `status`, and "both" can't happen. The behaviour is fine, but the contract over-promises. | Change the contract to "one of these keys". Or, if both are wanted, add the transition error and call `valid?` before returning so the date error is collected too. | "Is your API doc generated from the code or written by hand? How do they stay in sync?" |
+
+---
+
+## Summary
+
+- **Standards:** 16 findings (1 High, 4 Medium, 11 Low). Worst: the sanitize/dispose lost-update race (`device.rb:35`, `forward_only.rb:14-19`).
+- **Spec:** 2 findings (1 Medium, 1 Low). Worst: "sanitization method never changes" and the sanitized/`sanitized_at` pairing are not enforced outside `move_to` (verified with runner).
+- **Total:** 18 (1 High, 5 Medium, 12 Low). Tests are green, 83/83.
