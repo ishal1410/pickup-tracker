@@ -83,3 +83,12 @@ export function upsertPickup(list, pickup) {
   const rest = list.filter(p => p.id !== pickup.id)
   return [...rest, pickup].sort((a, b) => b.pickup_date.localeCompare(a.pickup_date) || b.id - a.id)
 }
+
+// Repurposed = resold + donated, out of devices that have an outcome. percent is null with no outcomes yet.
+export function repurposeSummary(pickups) {
+  const sum = key => pickups.reduce((n, p) => n + p.device_counts[key], 0)
+  const donated = sum('donated')
+  const repurposed = sum('resold') + donated
+  const withOutcome = repurposed + sum('recycled')
+  return { repurposed, donated, withOutcome, percent: withOutcome ? Math.round((repurposed / withOutcome) * 100) : null }
+}

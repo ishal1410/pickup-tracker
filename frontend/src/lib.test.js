@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { api, errorMessages, errorText, formatDate, parseSerials, todayLocal, upsertPickup } from './lib.js'
+import { api, errorMessages, errorText, formatDate, parseSerials, repurposeSummary, todayLocal, upsertPickup } from './lib.js'
 
 test('errorMessages turns Rails keys into sentences', () => {
   assert.deepEqual(
@@ -65,4 +65,14 @@ test('api turns a network failure into a plain sentence', async () => {
 test('api explains a 5xx without a JSON body', async () => {
   globalThis.fetch = async () => new Response('boom', { status: 500 })
   await assert.rejects(api('/pickups/1'), err => err.status === 500 && err.message === 'Something went wrong on the server (500). Please try again.')
+})
+
+test('repurposeSummary counts resold + donated out of devices with an outcome', () => {
+  const counts = (resold, donated, recycled) => ({ device_counts: { resold, donated, recycled, sanitized: 4 } })
+  assert.deepEqual(repurposeSummary([counts(3, 1, 1), counts(1, 1, 1)]), { repurposed: 6, donated: 2, withOutcome: 8, percent: 75 })
+  assert.equal(repurposeSummary([counts(1, 0, 2)]).percent, 33) // rounded
+})
+
+test('repurposeSummary has no percent when nothing has an outcome yet', () => {
+  assert.deepEqual(repurposeSummary([]), { repurposed: 0, donated: 0, withOutcome: 0, percent: null })
 })

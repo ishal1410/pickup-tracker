@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, DEVICE_LABELS, errorText, formatDate, PROGRESS_LABELS, todayLocal, upsertPickup } from './lib.js'
+import { api, DEVICE_LABELS, errorText, formatDate, PROGRESS_LABELS, repurposeSummary, todayLocal, upsertPickup } from './lib.js'
 import BookingForm from './BookingForm.jsx'
 import PickupDetail from './PickupDetail.jsx'
 import WarehousePanel from './WarehousePanel.jsx'
@@ -118,6 +118,7 @@ export default function App() {
   const checkedIn = allDevices - totals.expected
   const sanitized = totals.sanitized + totals.resold + totals.donated + totals.recycled
   const activePickups = pickups.filter(p => p.status !== 'cancelled').length
+  const reuse = repurposeSummary(pickups)
   const figure = n => (loadError || loading ? '—' : n) // never show zeros we didn't load
   const today = todayLocal()
 
@@ -172,6 +173,19 @@ export default function App() {
                 </li>
               ))}
             </ul>
+          </div>
+          <div className="repurpose">
+            <p>
+              <span className="repurpose-label">Repurposed:</span>{' '}
+              {loadError || loading || reuse.percent === null
+                ? <><span aria-hidden="true">—</span><span className="visually-hidden">no device outcomes yet</span></>
+                : <><strong>{reuse.repurposed} of {reuse.withOutcome}</strong> devices with an outcome ({reuse.percent}%)</>}
+            </p>
+            <p>
+              <span className="repurpose-label">Donated:</span>{' '}
+              <strong>{figure(reuse.donated)}</strong> {reuse.donated === 1 ? 'device' : 'devices'}
+              <span className="repurpose-note">Donated devices go to people who need computer access.</span>
+            </p>
           </div>
         </section>
 
