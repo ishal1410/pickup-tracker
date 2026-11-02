@@ -28,3 +28,8 @@ desktop.ini
 .vscode/*
 !.vscode/extensions.json
 .gstack/
+
+# Production build output (render.yaml builds it into backend/public at deploy)
+backend/public/index.html
+backend/public/assets/
+backend/public/vite.svg

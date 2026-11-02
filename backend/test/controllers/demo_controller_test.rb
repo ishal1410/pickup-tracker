@@ -33,16 +33,38 @@ class DemoControllerTest < ActionDispatch::IntegrationTest
     assert_operator customers(:globex).pickups.count, :>, 0
   end
 
-  test "answers 404 in production" do
-    # ponytail: minitest 6 dropped #stub, so flip Rails.env and restore it.
+  # ponytail: minitest 6 dropped #stub, so flip Rails.env / ENV and restore them.
+  def as_production(env = {})
     original, Rails.env = Rails.env, "production"
-    begin
-      post demo_reset_url, params: { sample: true }, as: :json
-    ensure
-      Rails.env = original
-    end
+    env.each { |key, value| ENV[key] = value }
+    yield
+  ensure
+    Rails.env = original
+    env.each_key { |key| ENV.delete(key) }
+  end
+
+  test "answers 404 in production without DEMO_MODE" do
+    ENV.delete("DEMO_MODE")
+    as_production { post demo_reset_url, params: { sample: true }, as: :json }
     assert_response :not_found
     assert_equal({ "error" => "Not found" }, response.parsed_body)
+    assert_operator customers(:acme).pickups.count, :>, 0
+  end
+
+  test "works in production when DEMO_MODE=1 (the hosted demo)" do
+    as_production("DEMO_MODE" => "1") { post demo_reset_url, params: { sample: false }, as: :json }
+    assert_response :success
+    assert_equal 0, customers(:acme).pickups.count
+  end
+
+  test "DEMO_MODE other than 1 still answers 404 in production" do
+    as_production("DEMO_MODE" => "true") { post demo_reset_url, params: { sample: false }, as: :json }
+    assert_response :not_found
+  end
+
+  test "DEMO_RESET_DISABLED wins over DEMO_MODE" do
+    as_production("DEMO_MODE" => "1", "DEMO_RESET_DISABLED" => "1") { post demo_reset_url, params: { sample: false }, as: :json }
+    assert_response :not_found
     assert_operator customers(:acme).pickups.count, :>, 0
   end
 
@@ -90,10 +112,16 @@ class DemoControllerTest < ActionDispatch::IntegrationTest
     assert customers(:acme).devices.pluck(:serial_number).all? { |serial| serial.start_with?("A#{customers(:acme).id}-") }
   end
 
-  test "db/seeds.rb refuses to run in production" do
-    original, Rails.env = Rails.env, "production"
-    assert_raises(RuntimeError) { load Rails.root.join("db/seeds.rb").to_s }
-  ensure
-    Rails.env = original
+  test "db/seeds.rb refuses to run in production without DEMO_MODE" do
+    ENV.delete("DEMO_MODE")
+    as_production { assert_raises(RuntimeError) { load Rails.root.join("db/seeds.rb").to_s } }
+  end
+
+  test "db/seeds.rb in production with DEMO_MODE=1 seeds the customer only, never samples unless SAMPLE=1" do
+    as_production("DEMO_MODE" => "1", "SAMPLE" => "yes") do
+      assert_output(/Seeded Acme Corp: 0 pickups/) { load Rails.root.join("db/seeds.rb").to_s }
+    end
+    assert_equal 0, customers(:acme).pickups.count
+    assert_operator customers(:globex).pickups.count, :>, 0
   end
 end

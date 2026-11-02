@@ -1,7 +1,12 @@
 class DemoController < ApplicationController
-  # ADR-008: dev/demo only. Off in production, and off anywhere DEMO_RESET_DISABLED is set.
+  # ADR-008: dev/demo only. Off in production unless DEMO_MODE=1 (the hosted demo),
+  # and always off where DEMO_RESET_DISABLED is set.
+  def self.enabled?
+    (ENV["DEMO_MODE"] == "1" || !Rails.env.production?) && ENV["DEMO_RESET_DISABLED"].blank?
+  end
+
   before_action do
-    if Rails.env.production? || ENV["DEMO_RESET_DISABLED"].present?
+    unless DemoController.enabled?
       render json: { error: "Not found" }, status: :not_found
     end
   end

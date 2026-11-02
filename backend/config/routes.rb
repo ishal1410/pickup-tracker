@@ -23,4 +23,11 @@ Rails.application.routes.draw do
 
   # Reveal health status on /up that returns 200 if the app boots with no exceptions, otherwise 500.
   get "up" => "rails/health#show", as: :rails_health_check
+
+  # Production serves the built React app from public/. Any other browser path
+  # (a deep link) gets its index.html; API paths and file-looking paths still 404.
+  root "spa#index"
+  get "*path" => "spa#index", format: false, constraints: ->(req) {
+    !req.path.include?(".") && !req.path.start_with?("/customer", "/pickups", "/devices", "/demo", "/up")
+  }
 end

@@ -1,0 +1,23 @@
+# Render Blueprint: one free web service. Rails serves the API and the built React app.
+# Free instance: sleeps after 15 min idle (~1 min to wake); disk is ephemeral, so the
+# SQLite demo data resets on every restart, spin-down or redeploy.
+services:
+  - type: web
+    name: pickup-tracker
+    runtime: ruby
+    plan: free # required: without it Render picks a paid plan
+    rootDir: backend
+    buildCommand: bundle install && cd ../frontend && npm ci && npm run build -- --outDir ../backend/public
+    # db:prepare creates the database and runs db/seeds.rb (customer only, empty first run).
+    # bundle exec keeps the start command independent of bin/ stubs.
+    startCommand: bundle exec rails db:prepare && bundle exec puma -C config/puma.rb
+    healthCheckPath: /up
+    envVars:
+      - key: RAILS_ENV
+        value: production
+      - key: DEMO_MODE
+        value: "1"
+      - key: BUNDLE_WITHOUT
+        value: development:test
+      - key: SECRET_KEY_BASE
+        generateValue: true
