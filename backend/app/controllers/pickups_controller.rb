@@ -4,7 +4,7 @@ class PickupsController < ApplicationController
   # GET /pickups: newest pickup date first, so upcoming pickups are never cut off.
   def index
     # ponytail: newest 200, no pagination. Add page params when a customer has more.
-    pickups = current_customer.pickups.order(pickup_date: :desc, id: :desc).limit(200)
+    pickups = current_customer.pickups.includes(:certificate).order(pickup_date: :desc, id: :desc).limit(200)
     render json: Pickup.with_device_counts(pickups)
   end
 
@@ -15,6 +15,9 @@ class PickupsController < ApplicationController
 
   # POST /pickups
   def create
+    unless serial_numbers_param_ok?
+      return render json: { serial_numbers: [ "must be a list of serial numbers" ] }, status: :unprocessable_content
+    end
     pickup = current_customer.pickups.new(create_params)
 
     if pickup.save
@@ -35,18 +38,27 @@ class PickupsController < ApplicationController
   end
 
   # GET /pickups/:id/certificate: the customer's proof that data was destroyed.
+  # Issued once (ADR-010); after that the stored certificate is returned.
   def certificate
-    unless @pickup.certificate_available?
+    unless @pickup.certificate || @pickup.certificate_available?
       return render json: { error: "Certificate is available once every device in this pickup is sanitized" }, status: :conflict
     end
 
-    render json: @pickup.certificate
+    render json: @pickup.issue_certificate!
   end
 
   private
     # Scoped to the customer: another customer's pickup is a 404.
     def set_pickup
       @pickup = current_customer.pickups.find(params.expect(:id))
+    end
+
+    # params.expect would silently drop a string or nested list here.
+    def serial_numbers_param_ok?
+      pickup = params[:pickup]
+      return true unless pickup.is_a?(ActionController::Parameters) && pickup.key?(:serial_numbers)
+      serials = pickup[:serial_numbers]
+      serials.nil? || (serials.is_a?(Array) && serials.all? { |serial| serial.is_a?(String) || serial.is_a?(Numeric) })
     end
 
     # No :status here. Every pickup starts scheduled.

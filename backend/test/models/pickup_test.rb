@@ -78,14 +78,24 @@ class PickupTest < ActiveSupport::TestCase
     assert_includes pickup.errors[:status], "can't go from collected to scheduled"
   end
 
-  test "certificate lists the customer, the standard and every device by serial" do
+  test "issue_certificate! stores one certificate and lists the customer, the standard and every device by serial" do
     devices(:received_one).sanitize("wipe")
-    cert = Pickup.find(pickups(:collected).id).certificate
+    pickup = Pickup.find(pickups(:collected).id)
+    cert = pickup.issue_certificate!
+    assert_equal cert, Pickup.find(pickup.id).issue_certificate!
 
-    assert_equal [ pickups(:collected).id, "Acme Corp", "NIST SP 800-88" ], cert.values_at(:pickup_id, :customer_name, :standard)
-    assert_equal %w[C02DES0001 C02REC0001 C02RES0001 C02WIP0001], cert[:devices].map { |d| d["serial_number"] }
-    assert_equal({ "serial_number" => "C02DES0001", "model" => nil, "sanitization_method" => "destroy", "status" => "sanitized" },
-      cert[:devices].first.except("sanitized_at"))
+    json = cert.as_json
+    assert_equal [ pickup.id, "Acme Corp", "NIST SP 800-88" ], json.values_at("pickup_id", "customer_name", "standard")
+    assert_equal %w[C02DES0001 C02REC0001 C02RES0001 C02WIP0001], json["devices"].map { |d| d["serial_number"] }
+    assert_equal({ "serial_number" => "C02DES0001", "model" => nil, "sanitization_method" => "destroy", "status" => "sanitized",
+                   "received_at" => nil }, json["devices"].first.except("sanitized_at"))
+  end
+
+  test "database allows one certificate per pickup" do
+    pickups(:collected).create_certificate!(number: "CERT-A", issued_at: Time.current)
+    assert_raises(ActiveRecord::RecordNotUnique) do
+      Certificate.insert_all!([ { pickup_id: pickups(:collected).id, number: "CERT-B", issued_at: Time.current } ])
+    end
   end
 
   test "database rejects an unknown status even when validations are skipped" do

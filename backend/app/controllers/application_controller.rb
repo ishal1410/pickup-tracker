@@ -13,8 +13,9 @@ class ApplicationController < ActionController::API
     render json: { error: exception.message }, status: :bad_request
   end
 
-  # ponytail: serial_number is the only unique index a request can hit.
-  # Add a key lookup here when a second one appears.
+  # ponytail: the serial index is the only unique index a request can hit
+  # here (bookings report theirs under serial_numbers, certificates use
+  # create_or_find_by!). Add a key lookup when a second one appears.
   rescue_from ActiveRecord::RecordNotUnique do
     render json: { serial_number: [ "has already been taken" ] }, status: :unprocessable_content
   end

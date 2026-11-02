@@ -58,7 +58,7 @@ class PickupProgressTest < ActiveSupport::TestCase
   end
 
   test "device_counts has every status plus total" do
-    assert_equal({ "expected" => 0, "received" => 1, "sanitized" => 2, "resold" => 1, "donated" => 0, "recycled" => 0, "total" => 4 },
+    assert_equal({ "expected" => 0, "received" => 1, "not_received" => 0, "sanitized" => 2, "resold" => 1, "donated" => 0, "recycled" => 0, "total" => 4 },
       pickups(:collected).device_counts)
   end
 
@@ -74,7 +74,7 @@ class PickupProgressTest < ActiveSupport::TestCase
 
   test "as_json is the pickup summary from the contract" do
     json = pickups(:collected).as_json
-    assert_equal %w[certificate_available created_at device_counts estimated_device_count id pickup_date progress status updated_at],
+    assert_equal %w[certificate_available certificate_number created_at device_counts estimated_device_count id pickup_date progress status updated_at],
       json.keys.sort
     assert_equal "processing", json["progress"]
   end
@@ -82,5 +82,33 @@ class PickupProgressTest < ActiveSupport::TestCase
   test "as_json_with_devices adds the devices in id order" do
     json = pickups(:collected).as_json_with_devices
     assert_equal pickups(:collected).devices.order(:id).pluck(:id), json["devices"].map { |d| d["id"] }
+  end
+
+  def collected_with_one_missing
+    pickup = book(%w[C02GOT1 C02MISS1])
+    pickup.collect
+    got, missing = pickup.devices.order(:id).to_a
+    assert got.receive && got.sanitize("wipe")
+    assert missing.mark_not_received
+    [ pickup.reload, got ]
+  end
+
+  test "not_received counts as finished: outcomes plus not_received is 'complete'" do
+    pickup, got = collected_with_one_missing
+    assert_equal "processing", pickup.progress
+    assert got.dispose("resold")
+    assert_equal "complete", pickup.reload.progress
+  end
+
+  test "certificate covers the sanitized devices once nothing is expected or received" do
+    pickup, _got = collected_with_one_missing
+    assert pickup.certificate_available?
+  end
+
+  test "no certificate when nothing was sanitized, even if nothing is left to process" do
+    pickup = book(%w[C02MISS2])
+    pickup.collect
+    assert pickup.devices.first.mark_not_received
+    assert_not pickup.reload.certificate_available?
   end
 end

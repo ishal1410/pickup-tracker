@@ -39,4 +39,17 @@ class PickupActionsTest < ActionDispatch::IntegrationTest
     assert_response :not_found
     assert_equal "scheduled", pickups(:today).reload.status
   end
+
+  test "cancel releases listed serials as not_received, so they can be booked again" do
+    post cancel_pickup_url(pickups(:today)), as: :json
+    assert_response :success
+    device = response.parsed_body["devices"].first
+    assert_equal "not_received", device["status"]
+    assert_equal [ "not_received" ], device["history"].map { |event| event["status"] }
+
+    post pickups_url, params: { pickup: { pickup_date: Date.current.to_s, estimated_device_count: 1,
+                                          serial_numbers: [ "C02EXP0001" ] } }, as: :json
+    assert_response :created
+    assert_equal %w[C02EXP0001 expected], response.parsed_body["devices"].first.values_at("serial_number", "status")
+  end
 end

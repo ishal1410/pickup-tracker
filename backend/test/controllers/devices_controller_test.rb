@@ -96,4 +96,24 @@ class DevicesControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
     assert_equal({ "error" => "Device not found" }, response.parsed_body)
   end
+
+  test "mark a listed serial not received once the pickup is collected" do
+    pickups(:today).collect
+    post mark_not_received_device_url(devices(:expected_one)), as: :json
+    assert_response :success
+    assert_equal "not_received", device_json(devices(:expected_one).id)["status"]
+    assert_equal 1, response.parsed_body["device_counts"]["not_received"]
+  end
+
+  test "mark not received on a scheduled pickup is refused" do
+    post mark_not_received_device_url(devices(:expected_one)), as: :json
+    assert_response :unprocessable_content
+    assert_equal({ "status" => [ "can't be marked not received before the pickup is collected" ] }, response.parsed_body)
+  end
+
+  test "every action returns each device's history" do
+    pickups(:today).collect
+    post receive_device_url(devices(:expected_one)), as: :json
+    assert_equal [ "received" ], device_json(devices(:expected_one).id)["history"].map { |event| event["status"] }
+  end
 end

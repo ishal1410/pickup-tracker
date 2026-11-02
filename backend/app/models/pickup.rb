@@ -9,6 +9,7 @@ class Pickup < ApplicationRecord
 
   belongs_to :customer
   has_many :devices
+  has_one :certificate
 
   attr_reader :serial_numbers
 
@@ -27,8 +28,16 @@ class Pickup < ApplicationRecord
   end
 
   # The customer's only change after booking. Nothing is ever deleted.
+  # Listed serials that will never arrive become not_received (audited by
+  # move_to), which releases them for a new booking.
   def cancel
-    move_to("cancelled")
+    transaction do
+      next false unless move_to("cancelled")
+      devices.where(status: "expected").each do |device|
+        device.mark_not_received or raise ActiveRecord::RecordInvalid, device
+      end
+      true
+    end
   end
 
   def collected?
@@ -65,30 +74,29 @@ class Pickup < ApplicationRecord
     return status unless collected?
 
     counts = device_counts
-    return "complete" if counts["total"].positive? && Device::OUTCOMES.sum { |status| counts[status] } == counts["total"]
+    return "complete" if counts["total"].positive? && Device::FINISHED.sum { |status| counts[status] } == counts["total"]
     return "processing" if counts["expected"] < counts["total"]
     "collected"
   end
 
   # Every status from sanitized on carries sanitized_at (validation plus the
   # devices_sanitized_fields check constraint), so the counts answer this.
+  # not_received devices don't block it; they're listed apart on the certificate.
   def certificate_available?
     counts = device_counts
-    counts["total"].positive? && counts["expected"].zero? && counts["received"].zero?
+    collected? && counts["expected"].zero? && counts["received"].zero? &&
+      Device::SANITIZED_OR_LATER.sum { |status| counts[status] }.positive?
   end
 
-  # API-v2 4.9: the customer's proof that data was destroyed.
-  def certificate
-    {
-      pickup_id: id,
-      customer_name: customer.name,
-      pickup_date: pickup_date,
-      standard: "NIST SP 800-88",
-      issued_at: Time.current,
-      devices: devices.sort_by(&:serial_number).map do |device|
-        device.as_json.slice("serial_number", "model", "sanitization_method", "sanitized_at", "status")
-      end
-    }
+  # API-v2 4.9: issued on first request, then the stored one is returned.
+  # create_or_find_by! leans on the unique pickup_id index, so two requests
+  # racing here still end with one certificate.
+  # ponytail: the number comes from the pickup id, so it is known before the insert.
+  def issue_certificate!
+    certificate || Certificate.create_or_find_by!(pickup: self) do |cert|
+      cert.number = format("CERT-%06d", id)
+      cert.issued_at = Time.current
+    end
   end
 
   # API-v2 3.1: the pickup summary.
@@ -101,6 +109,7 @@ class Pickup < ApplicationRecord
       "progress" => progress,
       "device_counts" => device_counts,
       "certificate_available" => certificate_available?,
+      "certificate_number" => certificate&.number,
       "created_at" => created_at,
       "updated_at" => updated_at
     }
@@ -108,7 +117,7 @@ class Pickup < ApplicationRecord
 
   # API-v2 3.2: the summary plus devices, in booking then intake order.
   def as_json_with_devices
-    as_json.merge("devices" => devices.sort_by(&:id).map(&:as_json))
+    as_json.merge("devices" => devices.includes(:events).order(:id).map(&:as_json))
   end
 
   private
@@ -132,10 +141,18 @@ class Pickup < ApplicationRecord
       serials = Array(serial_numbers)
       serials.tally.each { |serial, count| errors.add(:serial_numbers, "#{serial} is listed more than once") if count > 1 }
       serials.select { |serial| serial.length > 50 }.each { |serial| errors.add(:serial_numbers, "#{serial} is longer than 50 characters") }
-      Device.where(serial_number: serials).pluck(:serial_number).each { |serial| errors.add(:serial_numbers, "#{serial} is already registered") }
+      Device.where(serial_number: serials).where.not(status: "not_received").pluck(:serial_number).each { |serial| errors.add(:serial_numbers, "#{serial} is already registered") }
     end
 
+    # A concurrent booking can register a serial after serial_numbers_valid ran.
+    # The device insert then fails its validation or the unique index; report it
+    # like the normal check. Raising RecordInvalid makes save roll back and return false.
     def create_expected_devices
-      Array(serial_numbers).each { |serial| devices.create!(serial_number: serial, status: "expected") }
+      Array(serial_numbers).each do |serial|
+        devices.create!(serial_number: serial, status: "expected", created_at: created_at)
+      rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique
+        errors.add(:serial_numbers, "#{serial} is already registered")
+        raise ActiveRecord::RecordInvalid, self
+      end
     end
 end

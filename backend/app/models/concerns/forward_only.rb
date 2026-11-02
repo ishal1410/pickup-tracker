@@ -13,13 +13,19 @@ module ForwardOnly
     # repeat (sanitized -> sanitized), so a second sanitize can't swap the method.
     # with_lock reloads the row under a lock, so two concurrent requests can't
     # both pass the check on a stale in-memory status.
-    def move_to(new_status, **attrs)
+    # at: backdates the move (demo sample data); it stamps the history entry.
+    def move_to(new_status, at: Time.current, **attrs)
       with_lock do
-        unless self.class::TRANSITIONS.fetch(status, []).include?(new_status)
-          errors.add(:status, "can't go from #{status} to #{new_status}")
+        from = status
+        unless self.class::TRANSITIONS.fetch(from, []).include?(new_status)
+          errors.add(:status, "can't go from #{from} to #{new_status}")
           next false
         end
-        update(status: new_status, **attrs)
+        next false unless update(status: new_status, **attrs)
+        # ADR-011: the device audit trail is written here and nowhere else, in
+        # the same locked transaction as the move. Pickups keep no events.
+        events.create!(from_status: from, to_status: new_status, created_at: at) if respond_to?(:events)
+        true
       end
     end
 

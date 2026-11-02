@@ -52,6 +52,16 @@ class DeviceTest < ActiveSupport::TestCase
     assert_not_nil device.sanitized_at
   end
 
+  test "a move can be backdated: at: stamps the history entry and sanitized_at" do
+    device = devices(:received_one)
+    at = Time.zone.parse("2026-01-05 14:00")
+    assert device.sanitize("wipe", at: at)
+    device.reload
+    assert_equal at, device.sanitized_at
+    assert_equal at, device.events.last.created_at
+    assert_equal "sanitized", device.events.last.to_status
+  end
+
   test "sanitize rejects an unknown method" do
     device = devices(:received_one)
     assert_not device.sanitize("melt")
@@ -126,7 +136,7 @@ class DeviceTest < ActiveSupport::TestCase
   end
 
   test "as_json exposes exactly the contract fields" do
-    assert_equal %w[created_at id model pickup_id sanitization_method sanitized_at serial_number status updated_at],
+    assert_equal %w[created_at history id model pickup_id sanitization_method sanitized_at serial_number status updated_at],
       devices(:received_one).as_json.keys.sort
   end
 
@@ -144,5 +154,62 @@ class DeviceTest < ActiveSupport::TestCase
                             sanitization_method: "destroy", sanitized_at: Time.current,
                             created_at: Time.current, updated_at: Time.current } ])
     end
+  end
+
+  test "a listed serial that never arrived is marked not_received, and stays there" do
+    assert pickups(:today).collect
+    device = Device.find(devices(:expected_one).id)
+    assert device.mark_not_received
+    assert_equal "not_received", device.reload.status
+    assert_not device.receive
+    assert_includes device.errors[:status], "can't go from not_received to received"
+  end
+
+  test "only an expected device can be marked not_received" do
+    device = devices(:received_one)
+    assert_not device.mark_not_received
+    assert_equal({ status: [ "can't go from received to not_received" ] }, device.errors.to_hash)
+  end
+
+  test "mark_not_received needs a collected pickup" do
+    device = devices(:expected_one)
+    assert_not device.mark_not_received
+    assert_equal({ status: [ "can't be marked not received before the pickup is collected" ] }, device.errors.to_hash)
+    assert_equal "expected", device.reload.status
+  end
+
+  test "history records creation and every move, oldest first" do
+    device = pickups(:collected).devices.create!(serial_number: "HIST1", status: "received")
+    assert device.sanitize("wipe")
+    assert device.dispose("recycled")
+
+    history = device.reload.as_json["history"]
+    assert_equal %w[received sanitized recycled], history.map { |event| event["status"] }
+    assert_equal %w[at status], history.first.keys.sort
+    assert history.all? { |event| event["at"].present? }
+    assert_equal [ nil, "received", "sanitized" ], device.events.map(&:from_status)
+  end
+
+  test "a refused move leaves no history" do
+    device = devices(:received_one)
+    assert_no_difference("DeviceEvent.count") { assert_not device.dispose("resold") }
+  end
+
+  test "history is append-only" do
+    device = pickups(:collected).devices.create!(serial_number: "HIST2", status: "received")
+    assert_raises(ActiveRecord::ReadOnlyRecord) { device.events.first.update!(to_status: "recycled") }
+  end
+
+  test "a not_received serial can be checked in again on another pickup" do
+    assert pickups(:today).cancel
+    device = pickups(:collected).devices.new(serial_number: "C02EXP0001", status: "received")
+    assert device.save, device.errors.full_messages.to_sentence
+  end
+
+  test "database: serials are unique among devices that are not not_received" do
+    row = { pickup_id: pickups(:collected).id, serial_number: "C02REC0001", status: "not_received",
+            created_at: Time.current, updated_at: Time.current }
+    assert_difference("Device.count", 1) { Device.insert_all!([ row ]) }
+    assert_raises(ActiveRecord::RecordNotUnique) { Device.insert_all!([ row.merge(status: "received") ]) }
   end
 end

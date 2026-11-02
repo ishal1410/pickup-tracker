@@ -1,7 +1,7 @@
 require "test_helper"
 
 class PickupsControllerTest < ActionDispatch::IntegrationTest
-  SUMMARY_KEYS = %w[certificate_available created_at device_counts estimated_device_count id pickup_date progress status updated_at].freeze
+  SUMMARY_KEYS = %w[certificate_available certificate_number created_at device_counts estimated_device_count id pickup_date progress status updated_at].freeze
 
   test "index lists only the current customer's pickups" do
     get pickups_url, as: :json
@@ -23,11 +23,11 @@ class PickupsControllerTest < ActionDispatch::IntegrationTest
     assert_equal SUMMARY_KEYS, response.parsed_body.first.keys.sort
   end
 
-  test "index counts devices in SQL: 3 queries, no device rows loaded" do
+  test "index counts devices in SQL: 4 queries, no device rows loaded" do
     loaded = []
     counter = ->(*, payload) { loaded << payload[:class_name] }
     ActiveSupport::Notifications.subscribed(counter, "instantiation.active_record") do
-      assert_queries_count(3) { get pickups_url, as: :json } # customer, pickups, grouped counts
+      assert_queries_count(4) { get pickups_url, as: :json } # customer, pickups, certificates, grouped counts
     end
     assert_not_includes loaded, "Device"
   end
@@ -115,5 +115,49 @@ class PickupsControllerTest < ActionDispatch::IntegrationTest
       post pickups_url, params: { pickup_date: Date.current.to_s, estimated_device_count: 1 }, as: :json
     end
     assert_response :bad_request
+  end
+
+  test "serial_numbers that is not a list of strings answers 422, not a silent drop" do
+    [ "C02STR1", [ [ "C02NEST" ] ], [ { "serial" => "C02HASH" } ] ].each do |bad|
+      assert_no_difference("Pickup.count") do
+        post pickups_url, params: { pickup: { pickup_date: Date.current.to_s, estimated_device_count: 1, serial_numbers: bad } }, as: :json
+      end
+      assert_response :unprocessable_content
+      assert_equal({ "serial_numbers" => [ "must be a list of serial numbers" ] }, response.parsed_body, bad.inspect)
+    end
+  end
+
+  # As if a concurrent booking committed the same serial after our checks ran.
+  def without_check(klass, method)
+    klass.alias_method :"original_#{method}", method
+    klass.define_method(method) { |*| }
+    yield
+  ensure
+    klass.alias_method method, :"original_#{method}"
+    klass.remove_method :"original_#{method}"
+  end
+
+  RACE_BODY = { "serial_numbers" => [ "C02EXP0001 is already registered" ] }.freeze
+
+  def book_taken_serial
+    assert_no_difference([ "Pickup.count", "Device.count" ]) do
+      post pickups_url, params: { pickup: { pickup_date: Date.current.to_s, estimated_device_count: 1,
+                                            serial_numbers: [ "C02EXP0001" ] } }, as: :json
+    end
+  end
+
+  test "a booking that races past the pickup check answers 422 under serial_numbers" do
+    without_check(Pickup, :serial_numbers_valid) { book_taken_serial }
+    assert_response :unprocessable_content
+    assert_equal RACE_BODY, response.parsed_body
+  end
+
+  test "a booking that races past every check (unique index) answers 422 under serial_numbers" do
+    validator = Device.validators_on(:serial_number).grep(ActiveRecord::Validations::UniquenessValidator).first
+    without_check(Pickup, :serial_numbers_valid) do
+      without_check(validator.class, :validate_each) { book_taken_serial }
+    end
+    assert_response :unprocessable_content
+    assert_equal RACE_BODY, response.parsed_body
   end
 end

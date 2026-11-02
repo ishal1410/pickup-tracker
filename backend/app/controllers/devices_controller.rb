@@ -1,7 +1,7 @@
 # Warehouse steps. In production these come from Revivn's warehouse tools;
 # in this demo only the "Warehouse simulator (demo)" panel calls them.
 class DevicesController < ApplicationController
-  before_action :set_device, only: %i[receive sanitize dispose]
+  before_action :set_device, only: %i[receive mark_not_received sanitize dispose]
 
   # POST /pickups/:pickup_id/devices: a device the customer didn't list, found at intake.
   def create
@@ -18,6 +18,11 @@ class DevicesController < ApplicationController
   # POST /devices/:id/receive
   def receive
     render_result @device.receive
+  end
+
+  # POST /devices/:id/mark_not_received
+  def mark_not_received
+    render_result @device.mark_not_received
   end
 
   # POST /devices/:id/sanitize  { "sanitization_method": "wipe" | "destroy" }
